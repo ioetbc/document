@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { Schema } from "prosemirror-model";
 import { EditorState, TextSelection, type Command } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
@@ -13,6 +12,8 @@ import { keymap } from "prosemirror-keymap";
 import { inputRules, textblockTypeInputRule, wrappingInputRule } from "prosemirror-inputrules";
 import { extractSchema } from "./extract-schema";
 import { calculationPlugin, calculationResultMark } from "./calculation-plugin";
+import { createSourcePlugin } from "./source-plugin";
+import { submitSource } from "./source-actions";
 
 const schema = new Schema({ nodes: addListNodes(basicSchema.spec.nodes, "paragraph block*", "block"), marks: basicSchema.spec.marks.addToEnd("calculation_result", calculationResultMark) });
 const storageKey = "homepage-document-v1";
@@ -48,6 +49,7 @@ export default function Home() {
         plugins: [
           history(),
           calculationPlugin,
+          createSourcePlugin(submitSource),
           inputRules({ rules: [textblockTypeInputRule(/^(#{1,3})\s$/, schema.nodes.heading, match => ({ level: match[1].length })), wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list)] }),
           keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo, "Mod-b": toggleMark(schema.marks.strong), "Mod-i": toggleMark(schema.marks.em), Enter: chainCommands(splitListItem(schema.nodes.list_item), baseKeymap.Enter), "Mod-[": liftListItem(schema.nodes.list_item), "Mod-]": sinkListItem(schema.nodes.list_item) }),
           keymap(baseKeymap),

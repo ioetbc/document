@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Schema } from "prosemirror-model";
-import { EditorState, type Command } from "prosemirror-state";
+import { EditorState, TextSelection, type Command } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { schema as basicSchema } from "prosemirror-schema-basic";
 import { addListNodes, wrapInList, splitListItem, liftListItem, sinkListItem } from "prosemirror-schema-list";
@@ -12,8 +12,9 @@ import { history, undo, redo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { inputRules, textblockTypeInputRule, wrappingInputRule } from "prosemirror-inputrules";
 import { extractSchema } from "./extract-schema";
+import { calculationPlugin, calculationResultMark } from "./calculation-plugin";
 
-const schema = new Schema({ nodes: addListNodes(basicSchema.spec.nodes, "paragraph block*", "block"), marks: basicSchema.spec.marks });
+const schema = new Schema({ nodes: addListNodes(basicSchema.spec.nodes, "paragraph block*", "block"), marks: basicSchema.spec.marks.addToEnd("calculation_result", calculationResultMark) });
 const storageKey = "homepage-document-v1";
 const initialDocument = {
   type: "doc", content: [
@@ -46,17 +47,27 @@ export default function Home() {
         doc,
         plugins: [
           history(),
+          calculationPlugin,
           inputRules({ rules: [textblockTypeInputRule(/^(#{1,3})\s$/, schema.nodes.heading, match => ({ level: match[1].length })), wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list)] }),
           keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo, "Mod-b": toggleMark(schema.marks.strong), "Mod-i": toggleMark(schema.marks.em), Enter: chainCommands(splitListItem(schema.nodes.list_item), baseKeymap.Enter), "Mod-[": liftListItem(schema.nodes.list_item), "Mod-]": sinkListItem(schema.nodes.list_item) }),
           keymap(baseKeymap),
         ],
       }),
       attributes: { "aria-label": "Page content", role: "textbox", "aria-multiline": "true", spellcheck: "true" },
+      handleClick(view, position, event) {
+        // Paragraph margins hit the editor itself, rather than a text node.
+        // Preserve native text selection and modified clicks everywhere else.
+        if (event.target !== view.dom || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || !view.state.selection.empty) return false;
+        view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(position))));
+        view.focus();
+        return true;
+      },
       dispatchTransaction(transaction) {
-        const next = view.state.apply(transaction);
+        const previousDoc = view.state.doc;
+        const next = view.state.applyTransaction(transaction).state;
         view.updateState(next);
         setEditorState(next);
-        if (transaction.docChanged) {
+        if (!next.doc.eq(previousDoc)) {
           setWords(next.doc.textBetween(0, next.doc.content.size, " ").trim().split(/\s+/).filter(Boolean).length);
           try { localStorage.setItem(storageKey, JSON.stringify(next.doc.toJSON())); setStatus("Saved in this browser"); }
           catch { setStatus("Couldn’t save — browser storage unavailable"); }
@@ -64,6 +75,7 @@ export default function Home() {
       },
     });
     viewRef.current = view;
+    view.dispatch(view.state.tr.setMeta("initializeCalculations", true).setMeta("addToHistory", false));
     const frame = requestAnimationFrame(() => {
       setEditorState(view.state);
       setWords(view.state.doc.textBetween(0, view.state.doc.content.size, " ").trim().split(/\s+/).filter(Boolean).length);

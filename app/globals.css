@@ -1,5 +1,23 @@
 @import "prosemirror-view/style/prosemirror.css";
 
+.ProseMirror {
+  cursor: text;
+  caret-color: currentColor;
+  display: flow-root;
+  padding: 2px 8px;
+  line-height: 1.5;
+}
+
+/* Empty paragraphs need a full line box even before they contain text. */
+.ProseMirror :is(p, h1, h2, h3, h4, h5, h6) {
+  min-inline-size: 1px;
+  min-block-size: 1lh;
+}
+
+.calculation-result { color: #345542; border-radius: 4px; padding: 2px 6px; font-variant-numeric: tabular-nums; }
+.calculation-error { color: #a33e32; }
+.calculation-hint { color: #858c7e; font-size: 12px; line-height: 1.7; margin-top: 18px; }
+
 .editor-shell {
   max-width: 800px;
   margin-inline: auto;

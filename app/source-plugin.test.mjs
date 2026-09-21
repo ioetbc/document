@@ -118,10 +118,50 @@ test("pending and failed requests are not repeated and rejections are handled", 
   assert.deepEqual(errors, [error]);
 });
 
-test("server action independently validates inputs and acknowledges valid sources", async () => {
-  assert.deepEqual(await submitSource("https://example.com"), { source: "https://example.com" });
-  assert.deepEqual(await submitSource("report-123"), { source: "report-123" });
-  for (const source of [null, 42, "", "has spaces", "https://", "file:///etc/passwd"]) {
+test("server action independently validates page URLs", async () => {
+  for (const source of [null, 42, "", "report-123", "has spaces", "https://", "file:///etc/passwd", "https://user:pass@example.com"]) {
     await assert.rejects(submitSource(source), /Invalid source/);
   }
+});
+
+test("server action extracts numeric facts and rejects failed or malformed responses", async t => {
+  const previousAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const previousToken = process.env.CLOUDFLARE_API_TOKEN;
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    if (previousAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = previousAccount;
+    if (previousToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = previousToken;
+    globalThis.fetch = previousFetch;
+  });
+  process.env.CLOUDFLARE_ACCOUNT_ID = "test-account";
+  process.env.CLOUDFLARE_API_TOKEN = "test-token";
+  let payload = { success: true, result: [{ key: "Revenue 2025 (USD)", value: 1200000 }, { key: "Growth (%)", value: -2.5 }] };
+  let status = 200;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "https://api.cloudflare.com/client/v4/accounts/test-account/browser-rendering/json");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.Authorization, "Bearer test-token");
+    const body = JSON.parse(options.body);
+    assert.equal(body.url, "https://example.com/");
+    assert.ok(body.prompt.includes("quantitative facts"));
+    assert.equal(body.response_format.json_schema.type, "array");
+    return Response.json(payload, { status });
+  };
+  assert.deepEqual(await submitSource("https://example.com"), payload.result);
+  payload = { success: true, result: [] };
+  assert.deepEqual(await submitSource("https://example.com"), []);
+  for (const result of [null, {}, [{ key: "Price", value: "12" }], [{ key: " ", value: 12 }]]) {
+    payload = { success: true, result };
+    await assert.rejects(submitSource("https://example.com"), /invalid numeric source data/);
+  }
+  payload = { success: false, errors: [{ message: "Failed" }] };
+  await assert.rejects(submitSource("https://example.com"), /extraction failed/);
+  status = 429;
+  await assert.rejects(submitSource("https://example.com"), /HTTP 429/);
+  globalThis.fetch = async () => { throw new Error("network unavailable"); };
+  await assert.rejects(submitSource("https://example.com"), /network unavailable/);
+  delete process.env.CLOUDFLARE_API_TOKEN;
+  await assert.rejects(submitSource("https://example.com"), /Configure CLOUDFLARE/);
 });

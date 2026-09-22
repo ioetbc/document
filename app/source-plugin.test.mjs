@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { schema } from "prosemirror-schema-basic";
+import { schema as basicSchema } from "prosemirror-schema-basic";
+import { Schema } from "prosemirror-model";
 import { EditorState, TextSelection } from "prosemirror-state";
-import { createSourcePlugin } from "./source-plugin.ts";
+import { createSourcePlugin, sourceStatusMark } from "./source-plugin.ts";
 import { submitSource } from "./source-actions.ts";
+
+const schema = new Schema({ nodes: basicSchema.spec.nodes, marks: basicSchema.spec.marks.addToEnd("source_status", sourceStatusMark) });
 
 function editor(text = "", submit, onError) {
   const calls = [];
@@ -16,8 +19,9 @@ function editor(text = "", submit, onError) {
     view.state = view.state.apply(transaction);
     lifecycle.update(view, previous);
   };
+  view.dispatch = apply;
   return {
-    calls, view, lifecycle, apply,
+    calls, view, lifecycle, apply, plugin,
     type: text => apply(view.state.tr.insertText(text)),
     enter: (extra = {}) => plugin.props.handleKeyDown(view, { key: "Enter", ...extra }),
   };
@@ -164,4 +168,68 @@ test("server action extracts numeric facts and rejects failed or malformed respo
   await assert.rejects(submitSource("https://example.com"), /network unavailable/);
   delete process.env.CLOUDFLARE_API_TOKEN;
   await assert.rejects(submitSource("https://example.com"), /Configure CLOUDFLARE/);
+});
+
+test("source status is editable document text and follows the URL through edits", async () => {
+  let resolve;
+  const e = editor("source:https://example.com", () => new Promise(done => { resolve = done; }));
+  e.enter();
+  assert.equal(e.view.state.doc.textContent, "source:https://example.com (Loading...)");
+  e.apply(e.view.state.tr.insertText("Before ", 1));
+  resolve([]);
+  await new Promise(done => setImmediate(done));
+  assert.equal(e.view.state.doc.textContent, "Before source:https://example.com (Source loaded)");
+  const restored = schema.nodeFromJSON(e.view.state.doc.toJSON());
+  assert.equal(restored.textContent, e.view.state.doc.textContent);
+});
+
+test("failed sources display inline errors and Enter retries", async () => {
+  let count = 0;
+  const e = editor("source:https://example.com", () => {
+    if (++count === 1) throw new Error("offline");
+    return Promise.resolve([]);
+  }, () => {});
+  e.enter();
+  assert.match(e.view.state.doc.textContent, /Couldn’t load source/);
+  e.enter();
+  assert.match(e.view.state.doc.textContent, /Loading/);
+  await new Promise(done => setImmediate(done));
+  assert.equal(count, 2);
+  assert.equal(e.view.state.doc.textContent, "source:https://example.com (Source loaded)");
+});
+
+test("completion leaves deleted or manually edited status text alone", async () => {
+  for (const replacement of ["", " my note"]) {
+    let resolve;
+    const source = "source:https://example.com";
+    const e = editor(source, () => new Promise(done => { resolve = done; }));
+    e.enter();
+    e.apply(e.view.state.tr.insertText(replacement, 1 + source.length, e.view.state.doc.content.size - 1));
+    resolve([]);
+    await new Promise(done => setImmediate(done));
+    assert.equal(e.view.state.doc.textContent, source + replacement);
+  }
+});
+
+test("requests completing after editor teardown do not dispatch", async () => {
+  let resolve;
+  const e = editor("source:https://example.com", () => new Promise(done => { resolve = done; }));
+  e.enter();
+  e.lifecycle.destroy();
+  e.view.dispatch = () => assert.fail("dispatch after teardown");
+  resolve([]);
+  await new Promise(done => setImmediate(done));
+});
+
+test("restored inline source statuses retain a space after the URL", () => {
+  const plugin = createSourcePlugin(() => {});
+  const doc = schema.node("doc", null, [schema.node("paragraph", null, [
+    schema.text("source:https://example.com/properties/879916"),
+    schema.text("sourceLoaded", [schema.marks.source_status.create({
+      source: "https://example.com/properties/879916", generated: "sourceLoaded", status: "success",
+    })]),
+  ])]);
+  const state = EditorState.create({ doc, plugins: [plugin] });
+  const next = state.applyTransaction(state.tr.setMeta("initializeCalculations", true)).state;
+  assert.equal(next.doc.textContent, "source:https://example.com/properties/879916 sourceLoaded");
 });

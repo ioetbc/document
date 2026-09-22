@@ -54,3 +54,12 @@ test("prose labels before expressions are not treated as operands", () => {
   assert.equal(findCalculations("per square feet house_price / square_feet =", { ...values, square_feet: "800" })[0].result, "invalid calc");
   assert.equal(findCalculations("a ** b + 1 =", { a: 1, b: 2 })[0].result, "invalid calc");
 });
+
+test("API keys support spaces, units, punctuation, and overlapping names", () => {
+  const values = { "Number of bedrooms": 3, "Guide Price": 430000, "Price": 2, "Size (sqft)": 924, "Reservation Fee (% of purchase price)": 4.5 };
+  assert.equal(calculate("Number of bedrooms / Guide Price", values), 3 / 430000);
+  assert.equal(findCalculations("Number of bedrooms / Guide Price =", values)[0].result, 3 / 430000);
+  assert.equal(findCalculations("per square foot Guide Price / Size (sqft) =", values)[0].result, 430000 / 924);
+  assert.equal(calculate("Guide Price * Reservation Fee (% of purchase price) / 100", values), 19350);
+  assert.equal(calculate("Guide Prices / 2", values), "invalid calc");
+});

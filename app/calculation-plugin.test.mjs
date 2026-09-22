@@ -4,7 +4,7 @@ import { Schema } from "prosemirror-model";
 import { schema as basicSchema } from "prosemirror-schema-basic";
 import { EditorState, TextSelection } from "prosemirror-state";
 import { history, undo, redo, closeHistory } from "prosemirror-history";
-import { calculationPlugin, calculationResultMark } from "./calculation-plugin.ts";
+import { calculationPlugin, calculationResultMark, createCalculationPlugin } from "./calculation-plugin.ts";
 
 const schema = new Schema({ nodes: basicSchema.spec.nodes, marks: basicSchema.spec.marks.addToEnd("calculation_result", calculationResultMark) });
 function create(expression = "a + b =") {
@@ -143,4 +143,20 @@ test("legacy manual results resume updating when house_price changes", () => {
   assert.equal(lastLine(state), "per square feet house_price / square_feet = 1500");
   state = state.apply(state.tr.insertText("400000", from, from + 6));
   assert.equal(lastLine(state), "per square feet house_price / square_feet = 2000");
+});
+
+
+test("API values recalculate existing results as soon as they arrive", () => {
+  let values = {};
+  const plugin = createCalculationPlugin(() => values);
+  const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("Number of bedrooms / Guide Price ="))]);
+  let state = EditorState.create({ doc, plugins: [plugin] });
+  state = state.apply(state.tr.setMeta("initializeCalculations", true));
+  assert.match(lastLine(state), /invalid calc$/);
+  values = { "Number of bedrooms": 3, "Guide Price": 430000 };
+  state = state.apply(state.tr.setMeta("sourceValuesChanged", true));
+  assert.equal(lastLine(state), `Number of bedrooms / Guide Price = ${3 / 430000}`);
+  values = { ...values, "Guide Price": 300000 };
+  state = state.apply(state.tr.setMeta("sourceValuesChanged", true));
+  assert.equal(lastLine(state), `Number of bedrooms / Guide Price = ${3 / 300000}`);
 });

@@ -11,11 +11,11 @@ import { history, undo, redo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { inputRules, textblockTypeInputRule, wrappingInputRule } from "prosemirror-inputrules";
 import { extractSchema } from "./extract-schema";
-import { calculationPlugin, calculationResultMark } from "./calculation-plugin";
-import { createSourcePlugin } from "./source-plugin";
+import { createCalculationPlugin, calculationResultMark } from "./calculation-plugin";
+import { createSourcePlugin, sourceStatusMark } from "./source-plugin";
 import { submitSource } from "./source-actions";
 
-const schema = new Schema({ nodes: addListNodes(basicSchema.spec.nodes, "paragraph block*", "block"), marks: basicSchema.spec.marks.addToEnd("calculation_result", calculationResultMark) });
+const schema = new Schema({ nodes: addListNodes(basicSchema.spec.nodes, "paragraph block*", "block"), marks: basicSchema.spec.marks.addToEnd("calculation_result", calculationResultMark).addToEnd("source_status", sourceStatusMark) });
 const storageKey = "homepage-document-v1";
 const initialDocument = {
   type: "doc", content: [
@@ -34,9 +34,11 @@ export default function Home() {
   const [status, setStatus] = useState("Loading your page…");
   const [words, setWords] = useState(0);
   const [editorState, setEditorState] = useState<EditorState | null>(null);
+  const [sourceData, setSourceData] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!mount.current) return;
+    let sourceValues: Record<string, number> = {};
     let doc = schema.nodeFromJSON(initialDocument);
     let message = "Saved in this browser";
     try {
@@ -48,8 +50,17 @@ export default function Home() {
         doc,
         plugins: [
           history(),
-          calculationPlugin,
-          createSourcePlugin(submitSource),
+          createCalculationPlugin(() => sourceValues),
+          createSourcePlugin(async source => {
+            const data = await submitSource(source);
+            if (view.isDestroyed) return;
+            sourceValues = {
+              ...sourceValues,
+              ...Object.fromEntries(data.map(({ key, value }) => [key, value])),
+            };
+            setSourceData(sourceValues);
+            view.dispatch(view.state.tr.setMeta("sourceValuesChanged", true).setMeta("addToHistory", false));
+          }),
           inputRules({ rules: [textblockTypeInputRule(/^(#{1,3})\s$/, schema.nodes.heading, match => ({ level: match[1].length })), wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list)] }),
           keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo, "Mod-b": toggleMark(schema.marks.strong), "Mod-i": toggleMark(schema.marks.em), Enter: chainCommands(splitListItem(schema.nodes.list_item), baseKeymap.Enter), "Mod-[": liftListItem(schema.nodes.list_item), "Mod-]": sinkListItem(schema.nodes.list_item) }),
           keymap(baseKeymap),
@@ -97,7 +108,10 @@ export default function Home() {
   }
   const block = editorState?.selection.$from.parent;
   const format = block?.type.name === "heading" ? String(block.attrs.level) : "paragraph";
-  const extractedSchema = extractSchema(editorState?.doc.textBetween(0, editorState.doc.content.size, "\n", "\n") ?? "");
+  const extractedSchema = {
+    ...sourceData,
+    ...extractSchema(editorState?.doc.textBetween(0, editorState.doc.content.size, "\n", "\n") ?? ""),
+  };
 
   return (
       <main>

@@ -18,7 +18,34 @@
 .calculation-error { color: #a33e32; }
 .calculation-hint { color: #858c7e; font-size: 12px; line-height: 1.7; margin-top: 18px; }
 
+main {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 800px);
+  align-items: start;
+  gap: 24px;
+}
+
+.schema-panel {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.schema-panel pre {
+  margin-top: 0;
+  overflow-x: auto;
+}
+
 .editor-shell {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  width: 100%;
   max-width: 800px;
   margin-inline: auto;
+}
+
+@media (max-width: 700px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  .editor-shell { grid-column: 1; grid-row: 2; }
 }
